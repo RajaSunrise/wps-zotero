@@ -15,6 +15,7 @@ ZOTERO_PORT = 23119
 PROXY_PORT = 21931
 BUFSIZE = 8192
 DELAY = 0.0001
+SOCKET_TIMEOUT = 5.0  # Seconds
 PREFLIGHT_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS,PUT,PATCH,DELETE',
@@ -62,8 +63,13 @@ def recv_all(sock):
     while True:
         try:
             part = sock.recv(BUFSIZE)
-        except ConnectionResetError:
+        except (ConnectionResetError, socket.timeout):
             closed = True
+            break
+        except BlockingIOError:
+            # Should not happen if we use blocking sockets (with timeout)
+            # But if we used non-blocking, we would return here.
+            # For this simple proxy, we stick to blocking with timeout.
             break
 
         if not part:
@@ -90,23 +96,42 @@ def recv_all(sock):
                     closed = True
                     break
                 data += part
-            except ConnectionResetError:
+            except (ConnectionResetError, socket.timeout):
                 closed = True
                 break
     elif not closed:
-        if req.startswith('TRACE'):
-            # TRACE method must not include a body
-            pass
-        elif data.startswith(b'OPTIONS') and get_header(headers, 'Origin') and get_header(headers, 'Access-Control-Request-Method'):
-            # Preflight requests don't have a body
-            pass
-        else:
-            # Continue to read till the connection is closed
-            # Or if Content-Length is missing and it's not one of above, we might just assume end of request if we can't determine.
-            # But for HTTP/1.1 without Content-Length or Chunked, it usually means no body or close connection.
-            # For this proxy, we might get stuck here if we just wait for close.
-            # However, Zotero plugin communication usually has Content-Length for POST.
-            pass
+        # No Content-Length.
+        # Check if we expect a body.
+        # If it's a Request (starts with METHOD), usually GET/OPTIONS don't have body if no Content-Length.
+        # If it's a Response (starts with HTTP/), it might be read-until-close.
+
+        is_request = not req.startswith('HTTP/')
+        expect_body = True
+
+        if is_request:
+            method = req.split(' ')[0].upper()
+            if method in ['GET', 'HEAD', 'OPTIONS', 'TRACE', 'DELETE']:
+                # Usually no body
+                expect_body = False
+
+        if expect_body:
+            # Read until close
+            while True:
+                try:
+                    part = sock.recv(BUFSIZE)
+                    if not part:
+                        closed = True
+                        break
+                    data += part
+                except socket.timeout:
+                    # Timeout waiting for more data, assume end of stream?
+                    # Or broken connection.
+                    # For Zotero (local), timeout usually means it's done sending if we are waiting for close.
+                    closed = True
+                    break
+                except ConnectionResetError:
+                    closed = True
+                    break
 
     return data
 
@@ -114,6 +139,7 @@ def recv_all(sock):
 def stop_proxy():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
+        s.settimeout(1.0)
         s.connect(('127.0.0.1', PROXY_PORT))
         s.send(b'POST /stopproxy HTTP/1.1\r\n\r\n')
     except:
@@ -140,9 +166,22 @@ class ProxyServer:
     def run(self):
         self.input_list.append(self.server)
         self.running = True
+        print(f"Proxy server running on {PROXY_PORT}...")
         while self.running:
-            time.sleep(DELAY)
-            rlist, _, _ = select.select(self.input_list, [], [])
+            # Remove sleep, use select timeout
+            # time.sleep(DELAY)
+
+            try:
+                # Use a timeout in select to allow catching KeyboardInterrupt immediately
+                rlist, _, _ = select.select(self.input_list, [], [], 1.0)
+            except (KeyboardInterrupt, InterruptedError):
+                print("Stopping proxy server...")
+                self.running = False
+                break
+            except Exception as e:
+                logging.error(f"Select error: {e}")
+                break
+
             for s in rlist:
                 if s == self.server:
                     self.on_accept()
@@ -153,11 +192,10 @@ class ProxyServer:
                 except Exception as e:
                     logging.error("Error receiving data: {}".format(e))
                     self.on_close(s)
-                    break
+                    continue
 
                 if len(data) == 0:
                     self.on_close(s)
-                    break
                 else:
                     self.on_recv(s, data)
 
@@ -170,27 +208,40 @@ class ProxyServer:
         self.input_list.clear()
         self.channels.clear()
         self.clients.clear()
-        self.server.close()
+        try:
+            self.server.close()
+        except:
+            pass
 
     def on_accept(self):
-        clientsock, clientaddr = self.server.accept()
+        try:
+            clientsock, clientaddr = self.server.accept()
+        except Exception as e:
+            logging.error(f"Accept error: {e}")
+            return
+
+        # Set timeout to prevent hanging on recv
+        clientsock.settimeout(SOCKET_TIMEOUT)
+
         self.clients.append(clientaddr)
         self.input_list.append(clientsock)
         logging.info("{} has connected".format(clientaddr))
         forward = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
+            forward.settimeout(SOCKET_TIMEOUT)
             forward.connect(('127.0.0.1', ZOTERO_PORT))
         except socket.error as e:
             logging.warning("Cannot connect to Zotero, is the app started?")
             logging.debug("Failed to connect to Zotero: {}".format(e))
             forward.close()
-            # NOTE: Cannot close client sockets here for it will discard quit commands.
-            # But we should probably send an error response to client so it knows Zotero is down.
+            # Respond with 503
+            try:
+                response = b'HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nZotero is not running.'
+                clientsock.send(response)
+                clientsock.close()
+            except:
+                pass
 
-            # Simple 503 Service Unavailable
-            response = b'HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nZotero is not running.'
-            clientsock.send(response)
-            clientsock.close()
             if clientsock in self.input_list:
                 self.input_list.remove(clientsock)
             if clientaddr in self.clients:
@@ -209,7 +260,11 @@ class ProxyServer:
             pname = "unknown"
 
         if pname in self.clients:
-            self.clients.pop(self.clients.index(pname))
+            try:
+                self.clients.pop(self.clients.index(pname))
+            except ValueError:
+                pass
+
         if s in self.channels:
             out = self.channels[s]
             try:
@@ -219,7 +274,11 @@ class ProxyServer:
             if out in self.input_list:
                 self.input_list.remove(out)
             del self.channels[s]
-            del self.channels[out]
+            try:
+                del self.channels[out]
+            except KeyError:
+                pass
+
         if s in self.input_list:
             self.input_list.remove(s)
         try:
@@ -260,25 +319,26 @@ class ProxyServer:
                 for k,v in PREFLIGHT_HEADERS.items():
                     headers[k] = v
 
-                # Reconstruct headers with original case keys if possible, or just new ones
                 response_headers = []
                 for k,v in headers.items():
                     response_headers.append(f"{k}: {v}")
 
+                # Preflight response
                 data = ('HTTP/1.1 200 OK\r\n' + '\r\n'.join(response_headers) + '\r\n\r\n').encode('utf8') + body_raw
-                s.sendall(data)
+                try:
+                    s.sendall(data)
+                except:
+                    pass
                 logging.info('responded to a preflight request')
                 return
 
             # Forwarding request to Zotero
-            # Rewrite Host header to match Zotero's port
             headers['Host'] = '127.0.0.1:{}'.format(ZOTERO_PORT)
 
-            # Reconstruct data
-            # We must reconstruct the request carefully.
-            # data is bytes.
+            # Force close connection so we don't have to deal with Keep-Alive
+            headers['Connection'] = 'close'
 
-            # Rebuild headers
+            # Reconstruct headers
             header_lines = []
             for k,v in headers.items():
                 header_lines.append(f"{k}: {v}")
@@ -289,6 +349,7 @@ class ProxyServer:
             logging.info('message received from zotero')
             # CORS
             headers['Access-Control-Allow-Origin'] = '*'
+            # headers['Connection'] = 'close' # Zotero should already send close if we requested it, or we enforce it.
 
             header_lines = []
             for k,v in headers.items():
@@ -330,9 +391,13 @@ def main(argv):
             logging.info('proxy started!')
             atexit.register(lambda : logging.info('proxy stopped!'))
             server.run()
+        except (KeyboardInterrupt, SystemExit):
+            logging.info("Proxy stopped by user.")
         except Exception as e:
             if isinstance(e, socket.error) and e.errno == errno.EADDRINUSE:
                 logging.warning("port is already binded!")
+                # On Windows, we might want to kill existing? But that's dangerous.
+                # Just exit.
                 sys.exit()
             else:
                 logging.error('encountered unexpected error, exiting!')
