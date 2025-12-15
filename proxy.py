@@ -67,9 +67,6 @@ def recv_all(sock):
             closed = True
             break
         except BlockingIOError:
-            # Should not happen if we use blocking sockets (with timeout)
-            # But if we used non-blocking, we would return here.
-            # For this simple proxy, we stick to blocking with timeout.
             break
 
         if not part:
@@ -101,17 +98,12 @@ def recv_all(sock):
                 break
     elif not closed:
         # No Content-Length.
-        # Check if we expect a body.
-        # If it's a Request (starts with METHOD), usually GET/OPTIONS don't have body if no Content-Length.
-        # If it's a Response (starts with HTTP/), it might be read-until-close.
-
         is_request = not req.startswith('HTTP/')
         expect_body = True
 
         if is_request:
             method = req.split(' ')[0].upper()
             if method in ['GET', 'HEAD', 'OPTIONS', 'TRACE', 'DELETE']:
-                # Usually no body
                 expect_body = False
 
         if expect_body:
@@ -124,9 +116,6 @@ def recv_all(sock):
                         break
                     data += part
                 except socket.timeout:
-                    # Timeout waiting for more data, assume end of stream?
-                    # Or broken connection.
-                    # For Zotero (local), timeout usually means it's done sending if we are waiting for close.
                     closed = True
                     break
                 except ConnectionResetError:
@@ -154,8 +143,9 @@ class ProxyServer:
     channels = {}
     clients = []
 
-    def __init__(self, host, port):
+    def __init__(self, host, port, persistent=False):
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.persistent = persistent
         # NOTE: Setting this on Windows will cause multiple instances listening on the same port.
         if os.name == 'posix':
             self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1);
@@ -166,11 +156,9 @@ class ProxyServer:
     def run(self):
         self.input_list.append(self.server)
         self.running = True
-        print(f"Proxy server running on {PROXY_PORT}...")
+        mode = "persistent" if self.persistent else "normal"
+        print(f"Proxy server running on {PROXY_PORT} (mode: {mode})...")
         while self.running:
-            # Remove sleep, use select timeout
-            # time.sleep(DELAY)
-
             try:
                 # Use a timeout in select to allow catching KeyboardInterrupt immediately
                 rlist, _, _ = select.select(self.input_list, [], [], 1.0)
@@ -291,9 +279,20 @@ class ProxyServer:
         # logging.debug('received data: {}'.format(data))
         if data.startswith(b'POST /stopproxy'):
             logging.info('received stopping command!')
-            s.close()
-            self.running = False
+            if self.persistent:
+                logging.info('Persistent mode enabled: ignoring stop command.')
+                # Send 200 OK so the caller knows we received it, but we don't stop.
+                try:
+                    s.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n')
+                except:
+                    pass
+                # We don't close socket immediately, or maybe we do?
+                # Usually HTTP is request-response.
+            else:
+                s.close()
+                self.running = False
             return
+
         if s not in self.channels:
             self.on_close(s)
             return
@@ -349,7 +348,6 @@ class ProxyServer:
             logging.info('message received from zotero')
             # CORS
             headers['Access-Control-Allow-Origin'] = '*'
-            # headers['Connection'] = 'close' # Zotero should already send close if we requested it, or we enforce it.
 
             header_lines = []
             for k,v in headers.items():
@@ -385,27 +383,31 @@ def main(argv):
                         datefmt='%Y-%m-%d %H:%M:%S',
                         level=logging.INFO)
 
-    if len(argv) < 2:
-        try:
-            server = ProxyServer('127.0.0.1', PROXY_PORT)
-            logging.info('proxy started!')
-            atexit.register(lambda : logging.info('proxy stopped!'))
-            server.run()
-        except (KeyboardInterrupt, SystemExit):
-            logging.info("Proxy stopped by user.")
-        except Exception as e:
-            if isinstance(e, socket.error) and e.errno == errno.EADDRINUSE:
-                logging.warning("port is already binded!")
-                # On Windows, we might want to kill existing? But that's dangerous.
-                # Just exit.
-                sys.exit()
-            else:
-                logging.error('encountered unexpected error, exiting!')
-                logging.error(e)
-                logging.error(traceback.format_exc())
-    else:
-        if (argv[1] == 'kill'):
-            stop_proxy()
+    # Check for arguments
+    persistent = False
+    if '--persistent' in argv:
+        persistent = True
+    elif len(argv) > 1 and argv[1] == 'kill':
+        stop_proxy()
+        return
+
+    try:
+        server = ProxyServer('127.0.0.1', PROXY_PORT, persistent=persistent)
+        logging.info('proxy started!')
+        atexit.register(lambda : logging.info('proxy stopped!'))
+        server.run()
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Proxy stopped by user.")
+    except Exception as e:
+        if isinstance(e, socket.error) and e.errno == errno.EADDRINUSE:
+            logging.warning("port is already binded!")
+            # On Windows, we might want to kill existing? But that's dangerous.
+            # Just exit.
+            sys.exit()
+        else:
+            logging.error('encountered unexpected error, exiting!')
+            logging.error(e)
+            logging.error(traceback.format_exc())
 
 
 if __name__ == '__main__':

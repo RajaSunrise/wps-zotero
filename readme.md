@@ -7,6 +7,7 @@ A Zotero plugin for WPS Office, compatible with Windows, Linux, and macOS.
 - Insert and edit citations/bibliographies.
 - Compatible with Zotero 6 and Zotero 7.
 - Supports Microsoft Word and Google Docs citation style (mostly).
+- **Background Service**: The proxy server now runs in the background automatically, making the "one command" setup seamless.
 
 ## Installation
 
@@ -22,6 +23,8 @@ A Zotero plugin for WPS Office, compatible with Windows, Linux, and macOS.
 2. Double-click `windows安装与卸载.bat`.
 3. Select option `1` to install.
 4. Restart WPS Office.
+
+The installation will automatically set up a background service so the plugin works immediately every time you open WPS.
 
 ### Linux / macOS
 
@@ -53,6 +56,7 @@ After installation, you should see a "Zotero" tab in the WPS Writer ribbon.
 - **Zotero not responding?**
   - Make sure Zotero is running.
   - Check if the proxy server is running (check `~/.wps-zotero-proxy.log` or `%APPDATA%\kingsoft\wps\jsaddons\wps-zotero-proxy.log`).
+  - You can try restarting the computer to ensure the background service is running.
 
 ## Uninstallation
 

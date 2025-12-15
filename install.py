@@ -108,9 +108,129 @@ XML_PATHS = {
 PROXY_PATH = ADDON_PATH + os.path.sep + 'proxy.py'
 
 
+def install_startup_service(addon_dir, python_path):
+    print("Installing background service for automatic startup...")
+
+    proxy_script = os.path.join(addon_dir, 'proxy.py')
+
+    if platform.system() == 'Linux':
+        autostart_dir = os.path.join(os.environ['HOME'], '.config', 'autostart')
+        if not os.path.exists(autostart_dir):
+            os.makedirs(autostart_dir, exist_ok=True)
+
+        desktop_file = os.path.join(autostart_dir, 'wps-zotero-proxy.desktop')
+        with open(desktop_file, 'w') as f:
+            f.write(f'''[Desktop Entry]
+Type=Application
+Name=WPS Zotero Proxy
+Exec="{python_path}" "{proxy_script}" --persistent
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+Comment=Proxy server for WPS Zotero integration
+''')
+        print(f"Created autostart entry: {desktop_file}")
+
+        # Start it now
+        subprocess.Popen([python_path, proxy_script, '--persistent'],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    elif platform.system() == 'Darwin':
+        # MacOS LaunchAgent
+        launch_agents = os.path.join(os.environ['HOME'], 'Library', 'LaunchAgents')
+        if not os.path.exists(launch_agents):
+            os.makedirs(launch_agents, exist_ok=True)
+
+        plist_path = os.path.join(launch_agents, 'com.wps-zotero.proxy.plist')
+        with open(plist_path, 'w') as f:
+            f.write(f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.wps-zotero.proxy</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{python_path}</string>
+        <string>{proxy_script}</string>
+        <string>--persistent</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+''')
+        print(f"Created LaunchAgent: {plist_path}")
+
+        # Load it now
+        try:
+            subprocess.run(['launchctl', 'unload', plist_path], stderr=subprocess.DEVNULL)
+            subprocess.run(['launchctl', 'load', plist_path], stderr=subprocess.DEVNULL)
+        except Exception as e:
+            print(f"Failed to load LaunchAgent: {e}")
+
+    elif platform.system() == 'Windows':
+        startup_dir = os.path.join(os.environ['APPDATA'], 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
+        if not os.path.exists(startup_dir):
+            os.makedirs(startup_dir, exist_ok=True)
+
+        # Create a VBS script to run pythonw invisibly
+        # Use pythonw if possible for no console
+        python_exe = python_path.replace('\\\\', '\\')
+        if 'python.exe' in python_exe.lower():
+            # Try to use pythonw.exe in same dir
+            pythonw = python_exe.lower().replace('python.exe', 'pythonw.exe')
+            if os.path.exists(pythonw):
+                python_exe = pythonw
+
+        vbs_path = os.path.join(startup_dir, 'wps-zotero-proxy.vbs')
+        proxy_script_win = proxy_script.replace('/', '\\')
+
+        with open(vbs_path, 'w') as f:
+            # VBScript to run command hidden
+            # CreateObject("Wscript.Shell").Run "cmd /c ...", 0, False
+            cmd = f'"{python_exe}" "{proxy_script_win}" --persistent'
+            f.write(f'CreateObject("Wscript.Shell").Run "{cmd}", 0, False')
+
+        print(f"Created startup script: {vbs_path}")
+
+        # Start it now
+        try:
+            subprocess.Popen(['wscript', vbs_path], shell=False)
+        except Exception as e:
+            print(f"Failed to start proxy immediately: {e}")
+
+
+def remove_startup_service():
+    if platform.system() == 'Linux':
+        desktop_file = os.path.join(os.environ['HOME'], '.config', 'autostart', 'wps-zotero-proxy.desktop')
+        if os.path.exists(desktop_file):
+            print(f"Removing {desktop_file}")
+            os.remove(desktop_file)
+
+    elif platform.system() == 'Darwin':
+        plist_path = os.path.join(os.environ['HOME'], 'Library', 'LaunchAgents', 'com.wps-zotero.proxy.plist')
+        if os.path.exists(plist_path):
+            try:
+                subprocess.run(['launchctl', 'unload', plist_path], stderr=subprocess.DEVNULL)
+            except:
+                pass
+            print(f"Removing {plist_path}")
+            os.remove(plist_path)
+
+    elif platform.system() == 'Windows':
+        vbs_path = os.path.join(os.environ['APPDATA'], 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'wps-zotero-proxy.vbs')
+        if os.path.exists(vbs_path):
+            print(f"Removing {vbs_path}")
+            os.remove(vbs_path)
+
+
 def uninstall():
     print("Trying to quit proxy server if it's currently listening...")
     stop_proxy()
+    remove_startup_service()
     
     def del_rw(action, name, exc):
         os.chmod(name, stat.S_IWRITE)
@@ -241,6 +361,11 @@ if os.name == 'nt':
     except Exception as e:
         print(f"Failed to update Zotero prefs: {e}")
 
+# Install Startup Service
+try:
+    install_startup_service(target_dir, PYTHON_PATH.replace('\\\\', '\\'))
+except Exception as e:
+    print(f"Failed to install startup service: {e}")
 
 print('All done, enjoy!')
 print('(run ./install.py -u to uninstall)')
