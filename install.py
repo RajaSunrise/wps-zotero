@@ -11,15 +11,15 @@ from proxy import stop_proxy
 
 
 # Prevent running as root on Linux
-if platform.system() == 'Linux' and os.environ['USER'] == 'root':
+if platform.system() == 'Linux' and os.environ.get('USER') == 'root':
     print("This addon cannot be installed as root!", file=sys.stderr)
     sys.exit(1)
 
 
-# Check whether Python 3 is in PATH
+# Check whether Python 3 is in PATH and return the full path
 def checkpy():
     def runcmd(cmd):
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
         code = p.wait()
         res = [line.decode() for line in p.stdout.readlines()]
         return code, res
@@ -27,21 +27,48 @@ def checkpy():
     if platform.system() == 'Windows':
         cmd = 'where python'
     else:
-        cmd = 'which python'
-    _, pyexes = runcmd(cmd)
+        cmd = 'which python3'
+
+    code, pyexes = runcmd(cmd)
+
+    # If which python3 failed, try python
+    if (code != 0 or len(pyexes) == 0) and platform.system() != 'Windows':
+         cmd = 'which python'
+         code, pyexes = runcmd(cmd)
+
     ver = None
+    py_path = None
+
     if len(pyexes) > 0:
-        _, res = runcmd('{} --version'.format(pyexes[0].strip()))
-        if len(res) > 0 and res[0].startswith('Python 3'):
-            ver = res[0]
+        py_path = pyexes[0].strip()
+        # Check version
+        try:
+            # On Windows, python --version might print to stderr?
+            p = subprocess.Popen([py_path, '--version'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            out, _ = p.communicate()
+            res = [out.decode()]
+            if len(res) > 0 and 'Python 3' in res[0]:
+                ver = res[0].strip()
+        except Exception as e:
+            print(f"Error checking python version: {e}")
+
     if ver is None:
         print('Please add Python 3 to the PATH environment variable!')
+        # Allow continue but warn? Or fail? The script needs python3.
+        # But we are running IN python3 usually.
+        py_path = sys.executable
+        ver = platform.python_version()
+        print(f"Using current python interpreter: {py_path} ({ver})")
+
     else:
-        print('Python in PATH:', ver)
-    return ver
+        print('Python found:', ver)
+        print('Path:', py_path)
         
-if platform.system() == 'Windows':
-    checkpy()
+    return py_path.replace('\\', '\\\\') # Escape backslashes for JS string
+
+
+# Determine python path
+PYTHON_PATH = checkpy()
 
 
 # File & directory paths
@@ -49,10 +76,30 @@ PKG_PATH = os.path.dirname(os.path.abspath(__file__))
 with open(PKG_PATH + os.path.sep + 'version.js') as f:
     VERSION = f.readlines()[0].split('=')[-1].strip()[1:-1]
 APPNAME = 'wps-zotero_{}'.format(VERSION)
-if os.name == 'posix':
-    ADDON_PATH = os.environ['HOME'] + '/.local/share/Kingsoft/wps/jsaddons'
-else:
+
+# Determine ADDON_PATH
+if platform.system() == 'Windows':
     ADDON_PATH = os.environ['APPDATA'] + '\\kingsoft\\wps\\jsaddons'
+elif platform.system() == 'Darwin':
+    # MacOS path
+    # Try standard path
+    home = os.environ['HOME']
+    possible_paths = [
+        home + '/Library/Application Support/Kingsoft/WPS/jsaddons',
+        home + '/Library/Containers/com.kingsoft.wpsoffice.mac/Data/Library/Application Support/Kingsoft/WPS/jsaddons'
+    ]
+    ADDON_PATH = possible_paths[0]
+    # Check if the second one exists (sandboxed), if so use it?
+    # Or maybe we should try to install to both or ask user?
+    # For now default to standard Application Support.
+    if os.path.exists(possible_paths[1]):
+        ADDON_PATH = possible_paths[1]
+else:
+    # Linux
+    ADDON_PATH = os.environ['HOME'] + '/.local/share/Kingsoft/wps/jsaddons'
+
+print(f"Installing to: {ADDON_PATH}")
+
 XML_PATHS = {
     'jsplugins': ADDON_PATH + os.path.sep + 'jsplugins.xml',
     'publish': ADDON_PATH + os.path.sep + 'publish.xml',
@@ -83,10 +130,14 @@ def uninstall():
         with open(fp) as f:
             xmlStr = f.read()
         records = [(m.start(),m.end()) for m in re.finditer(r'[\ \t]*<.*wps-zotero.*/>\s*', xmlStr)]
+        # Reverse order to avoid index shifting
+        records.reverse()
         for r in records:
             print('Removing record from {}'.format(fp))
-            with open(fp, 'w') as f:
-                f.write(xmlStr[:r[0]] + xmlStr[r[1]:])
+            xmlStr = xmlStr[:r[0]] + xmlStr[r[1]:]
+
+        with open(fp, 'w') as f:
+            f.write(xmlStr)
 
 
 # Uninstall existing installation
@@ -123,17 +174,39 @@ if not os.path.exists(XML_PATHS['authwebsite']):
 
 
 # Copy to jsaddons
-shutil.copytree(PKG_PATH, ADDON_PATH + os.path.sep + APPNAME)
+target_dir = ADDON_PATH + os.path.sep + APPNAME
+shutil.copytree(PKG_PATH, target_dir)
+
+# Create/Update config.js in the installed directory
+config_path = os.path.join(target_dir, 'js', 'config.js')
+with open(config_path, 'w') as f:
+    f.write(f'// This file is automatically generated by install.py\n')
+    f.write(f'const PYTHON_PATH = "{PYTHON_PATH}";\n')
+    # Escape backslashes for JS string
+    addon_path_js = ADDON_PATH.replace('\\', '\\\\')
+    f.write(f'const ADDON_PATH = "{addon_path_js}";\n')
 
 
 # Write records to XML files
 def register(fp, tagname, record):
     with open(fp) as f:
         content = f.read()
+
+    # Check if already registered (should be removed by uninstall, but safety check)
+    if 'wps-zotero' in content:
+        print(f"Record already exists in {fp}")
+        return
+
     pos = [m.end() for m in re.finditer(r'<' + tagname + r'>\s*', content)]
     if len(pos) == 0:
+        # Tag not found, maybe empty file or wrong structure?
+        # Try to wrap content in tag if it looks like xml
+        if '<?xml' in content:
+             # Just append at end? No, need inside root
+             pass
         content += f'<{tagname}></{tagname}>'
         pos = [content.index(f'</{tagname}>')]
+
     i = pos[0]
     with open(fp, 'w') as f:
         f.write(content[:i] + record + os.linesep + content[i:])
@@ -150,18 +223,23 @@ register(XML_PATHS['authwebsite'], 'websites', rec)
 # https://www.zotero.org/support/kb/addcitationdialog_raised
 if os.name == 'nt':
     print('Change zotero preference to alleviate the problem of Zotero window not showing in front.')
-    tmp = os.environ['APPDATA'] + '\\Zotero\\Zotero\\Profiles\\'
-    for fn in os.listdir(tmp):
-        if os.path.isdir(fn) and tmp.endswith('.default') and os.path.isfile(fn + '\\prefs.js'):
-            pref_fn = fn + '\\prefs.js'
-            with open(pref_fn) as f:
-                content = f.read()
-            if 'extensions.zotero.integration.keepAddCitationDialogRaised' in content:
-                content = content.replace('user_pref("extensions.zotero.integration.keepAddCitationDialogRaised", false)', 'user_pref("extensions.zotero.integration.keepAddCitationDialogRaised", true);')
-            else:
-                content += '\nuser_pref("extensions.zotero.integration.keepAddCitationDialogRaised", true);\n'
-            with open(pref_fn, 'w') as f:
-                f.write(content)
+    try:
+        tmp = os.environ['APPDATA'] + '\\Zotero\\Zotero\\Profiles\\'
+        if os.path.exists(tmp):
+            for fn in os.listdir(tmp):
+                profile_path = os.path.join(tmp, fn)
+                if os.path.isdir(profile_path) and os.path.isfile(os.path.join(profile_path, 'prefs.js')):
+                    pref_fn = os.path.join(profile_path, 'prefs.js')
+                    with open(pref_fn) as f:
+                        content = f.read()
+                    if 'extensions.zotero.integration.keepAddCitationDialogRaised' in content:
+                        content = content.replace('user_pref("extensions.zotero.integration.keepAddCitationDialogRaised", false)', 'user_pref("extensions.zotero.integration.keepAddCitationDialogRaised", true);')
+                    else:
+                        content += '\nuser_pref("extensions.zotero.integration.keepAddCitationDialogRaised", true);\n'
+                    with open(pref_fn, 'w') as f:
+                        f.write(content)
+    except Exception as e:
+        print(f"Failed to update Zotero prefs: {e}")
 
 
 print('All done, enjoy!')

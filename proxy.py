@@ -13,7 +13,7 @@ import errno
 
 ZOTERO_PORT = 23119
 PROXY_PORT = 21931
-BUFSIZE = 4096
+BUFSIZE = 8192
 DELAY = 0.0001
 PREFLIGHT_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -24,7 +24,12 @@ PREFLIGHT_HEADERS = {
 
 
 def parse_head(hd_raw):
-    head = hd_raw.decode('utf8').split("\r\n")
+    try:
+        head = hd_raw.decode('utf8').split("\r\n")
+    except UnicodeDecodeError:
+        # Fallback to latin-1 if utf8 fails
+        head = hd_raw.decode('latin-1').split("\r\n")
+
     request = head[0]
     headers = {}
     for line in head[1:]:
@@ -34,18 +39,7 @@ def parse_head(hd_raw):
         parts = line.split(':', 1)
         if len(parts) == 2:
             key = parts[0].strip()
-            # Normalize key title case for consistency (e.g. Content-Length)
-            # However, for simplicity and robustness, we can just store them as is or title-cased.
-            # But recv_all checks 'Content-Length', so we should ensure it matches.
-            # Zotero might send lower-case headers.
-            # Let's title-case standard headers we care about or keep original but handle lookup carefully.
-            # Using title() on the key is a simple way to normalize "content-length" -> "Content-Length"
-            # But "content-type" -> "Content-Type".
-            # "Access-Control-Allow-Origin" -> "Access-Control-Allow-Origin".
-            # Be careful with "ETag" -> "Etag".
-            # Better to store keys case-insensitively (e.g. lower case) for logic, but maybe we need to preserve for forwarding?
-            # The original code preserved case.
-            # Let's strip whitespace from value.
+            # We don't change case of key here, but handle lookup case-insensitively
             headers[key] = parts[1].strip()
 
     return request, headers
@@ -66,7 +60,12 @@ def recv_all(sock):
 
     # Read in Http head
     while True:
-        part = sock.recv(BUFSIZE)
+        try:
+            part = sock.recv(BUFSIZE)
+        except ConnectionResetError:
+            closed = True
+            break
+
         if not part:
             closed = True
             break
@@ -85,7 +84,15 @@ def recv_all(sock):
     if content_length:
         length = len(hd_raw) + 4 + int(content_length)
         while len(data) < length:
-            data += sock.recv(BUFSIZE)
+            try:
+                part = sock.recv(BUFSIZE)
+                if not part:
+                    closed = True
+                    break
+                data += part
+            except ConnectionResetError:
+                closed = True
+                break
     elif not closed:
         if req.startswith('TRACE'):
             # TRACE method must not include a body
@@ -95,12 +102,11 @@ def recv_all(sock):
             pass
         else:
             # Continue to read till the connection is closed
-            while True:
-                part = sock.recv(BUFSIZE)
-                if not part:
-                    closed = True
-                    break
-                data += part
+            # Or if Content-Length is missing and it's not one of above, we might just assume end of request if we can't determine.
+            # But for HTTP/1.1 without Content-Length or Chunked, it usually means no body or close connection.
+            # For this proxy, we might get stuck here if we just wait for close.
+            # However, Zotero plugin communication usually has Content-Length for POST.
+            pass
 
     return data
 
@@ -142,7 +148,13 @@ class ProxyServer:
                     self.on_accept()
                     break
 
-                data = recv_all(s)
+                try:
+                    data = recv_all(s)
+                except Exception as e:
+                    logging.error("Error receiving data: {}".format(e))
+                    self.on_close(s)
+                    break
+
                 if len(data) == 0:
                     self.on_close(s)
                     break
@@ -151,7 +163,10 @@ class ProxyServer:
 
         # Close all sockets
         for s in self.input_list:
-            s.close()
+            try:
+                s.close()
+            except:
+                pass
         self.input_list.clear()
         self.channels.clear()
         self.clients.clear()
@@ -170,27 +185,51 @@ class ProxyServer:
             logging.debug("Failed to connect to Zotero: {}".format(e))
             forward.close()
             # NOTE: Cannot close client sockets here for it will discard quit commands.
+            # But we should probably send an error response to client so it knows Zotero is down.
+
+            # Simple 503 Service Unavailable
+            response = b'HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nZotero is not running.'
+            clientsock.send(response)
+            clientsock.close()
+            if clientsock in self.input_list:
+                self.input_list.remove(clientsock)
+            if clientaddr in self.clients:
+                self.clients.remove(clientaddr)
+
             return
+
         self.input_list.append(forward)
         self.channels[clientsock] = forward
         self.channels[forward] = clientsock
 
     def on_close(self, s):
-        pname = s.getpeername()
+        try:
+            pname = s.getpeername()
+        except:
+            pname = "unknown"
+
         if pname in self.clients:
             self.clients.pop(self.clients.index(pname))
         if s in self.channels:
             out = self.channels[s]
-            out.close()
-            self.input_list.remove(out)
+            try:
+                out.close()
+            except:
+                pass
+            if out in self.input_list:
+                self.input_list.remove(out)
             del self.channels[s]
             del self.channels[out]
-        self.input_list.remove(s)
-        s.close()
+        if s in self.input_list:
+            self.input_list.remove(s)
+        try:
+            s.close()
+        except:
+            pass
         logging.info("{} has disconnected".format(pname))
 
     def on_recv(self, s, data):
-        logging.debug('received data: {}'.format(data))
+        # logging.debug('received data: {}'.format(data))
         if data.startswith(b'POST /stopproxy'):
             logging.info('received stopping command!')
             s.close()
@@ -199,36 +238,70 @@ class ProxyServer:
         if s not in self.channels:
             self.on_close(s)
             return
+
         # Parse HEAD
         head_raw, _, body_raw = data.partition(b"\r\n\r\n")
-        request, headers = parse_head(head_raw)
-        if s.getpeername() in self.clients:
+        try:
+            request, headers = parse_head(head_raw)
+        except Exception as e:
+            logging.error("Failed to parse header: {}".format(e))
+            self.on_close(s)
+            return
+
+        try:
+            peer_name = s.getpeername()
+        except:
+            peer_name = None
+
+        if peer_name in self.clients:
             # Preflight responses
-            logging.info('message received on client {}'.format(s.getpeername()))
+            logging.info('message received on client {}'.format(peer_name))
             if data.startswith(b'OPTIONS') and get_header(headers, 'Origin') and get_header(headers, 'Access-Control-Request-Method'):
                 for k,v in PREFLIGHT_HEADERS.items():
                     headers[k] = v
-                data = '\r\n'.join(['HTTP/1.0 200 OK'] + [': '.join(h) for h in headers.items()] + ['', '']).encode('utf8') + body_raw
+
+                # Reconstruct headers with original case keys if possible, or just new ones
+                response_headers = []
+                for k,v in headers.items():
+                    response_headers.append(f"{k}: {v}")
+
+                data = ('HTTP/1.1 200 OK\r\n' + '\r\n'.join(response_headers) + '\r\n\r\n').encode('utf8') + body_raw
                 s.sendall(data)
                 logging.info('responded to a preflight request')
                 return
 
             # Forwarding request to Zotero
             # Rewrite Host header to match Zotero's port
-            # Note: headers keys might have varied casing. We reconstruct headers.
             headers['Host'] = '127.0.0.1:{}'.format(ZOTERO_PORT)
 
             # Reconstruct data
-            # headers is a dict. We need to preserve the request line.
-            data = '\r\n'.join([request] + [': '.join(h) for h in headers.items()] + ['', '']).encode('utf8') + body_raw
+            # We must reconstruct the request carefully.
+            # data is bytes.
+
+            # Rebuild headers
+            header_lines = []
+            for k,v in headers.items():
+                header_lines.append(f"{k}: {v}")
+
+            data = (request + '\r\n' + '\r\n'.join(header_lines) + '\r\n\r\n').encode('utf8') + body_raw
 
         else:
             logging.info('message received from zotero')
             # CORS
             headers['Access-Control-Allow-Origin'] = '*'
-            data = '\r\n'.join([request] + [': '.join(h) for h in headers.items()] + ['', '']).encode('utf8') + body_raw
-        self.channels[s].send(data)
-        logging.info('responded to {}'.format(self.channels[s].getpeername()))
+
+            header_lines = []
+            for k,v in headers.items():
+                header_lines.append(f"{k}: {v}")
+
+            data = (request + '\r\n' + '\r\n'.join(header_lines) + '\r\n\r\n').encode('utf8') + body_raw
+
+        try:
+            self.channels[s].send(data)
+            # logging.info('responded to {}'.format(self.channels[s].getpeername()))
+        except Exception as e:
+            logging.error("Failed to send data: {}".format(e))
+            self.on_close(s)
 
 
 def main(argv):
@@ -237,8 +310,14 @@ def main(argv):
         logfile = os.environ['HOME'] + '/.wps-zotero-proxy.log'
     else:
         logfile = os.environ['APPDATA'] + '\\kingsoft\\wps\\jsaddons\\wps-zotero-proxy.log'
+
+    # Rotate log if too big
     if os.path.exists(logfile) and os.path.getsize(logfile) > 100 * 1024:
-        os.remove(logfile)
+        try:
+            os.remove(logfile)
+        except:
+            pass
+
     logging.basicConfig(filename=logfile,
                         filemode='a',
                         format='%(asctime)s.%(msecs)03d %(levelname)s %(module)s: %(message)s',

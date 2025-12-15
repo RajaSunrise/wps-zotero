@@ -37,25 +37,42 @@ function OnAddinLoad(ribbonUI) {
     GLOBAL_MAP.instDir = GLOBAL_MAP.isWin ?
         wps.Env.GetAppDataPath().replaceAll('/', '\\') + `\\kingsoft\\wps\\jsaddons\\wps-zotero_${VERSION}`:
         wps.Env.GetHomePath() + `/.local/share/Kingsoft/wps/jsaddons/wps-zotero_${VERSION}`;
+
+    // Check if ADDON_PATH is defined (from config.js) to override the default path logic, especially for macOS
+    if (typeof ADDON_PATH !== 'undefined' && ADDON_PATH) {
+        GLOBAL_MAP.instDir = ADDON_PATH + GLOBAL_MAP.osSep + `wps-zotero_${VERSION}`;
+    }
+
     GLOBAL_MAP.proxyPath = GLOBAL_MAP.instDir + GLOBAL_MAP.osSep + 'proxy.py';
 
     // Start http proxy server
     if (GLOBAL_MAP.isWin) {
-        wps.OAAssist.ShellExecute('pythonw.exe', GLOBAL_MAP.proxyPath);
+        // Use PYTHON_PATH from config.js if available, else fallback to pythonw.exe
+        let python = (typeof PYTHON_PATH !== 'undefined' && PYTHON_PATH) ? PYTHON_PATH : 'pythonw.exe';
+
+        // If the detected python is 'python.exe', try to use 'pythonw.exe' to avoid console window
+        if (python.toLowerCase().endsWith('python.exe')) {
+             let pythonw = python.substring(0, python.length - 4) + 'w.exe';
+             // We can't verify if pythonw exists easily, so we stick to the detected python if custom,
+             // but if it's the standard path, pythonw usually exists.
+             // However, to be safe, we use the detected path.
+             // If the user wants no window, they should ensure pythonw is used or configured.
+        }
+
+        wps.OAAssist.ShellExecute(python, GLOBAL_MAP.proxyPath);
     }
     else {
-        // Use bash to ensure environment is loaded and python3 is found
-        // ShellExecute takes (file, params), so we must pass the entire command as the second argument.
-        // We also need to escape quotes properly.
-        let cmd = `nohup python3 \\"${GLOBAL_MAP.proxyPath}\\" > /dev/null 2>&1 &`;
+        // Linux or macOS
+        let python = (typeof PYTHON_PATH !== 'undefined' && PYTHON_PATH) ? PYTHON_PATH : 'python3';
+        let cmd = `nohup "${python}" "${GLOBAL_MAP.proxyPath}" > /dev/null 2>&1 &`;
         wps.OAAssist.ShellExecute('bash', `-c "${cmd}"`);
     }
-    
+
     // Exit the proxy server when the application quits.
     Application.ApiEvent.AddApiEventListener("ApplicationQuit", () => {
         postRequestXHR('http://127.0.0.1:21931/stopproxy', null);
     });
-    
+
     return true;
 }
 
@@ -128,4 +145,3 @@ function GetImage(control) {
     }
     return "images/default.svg";
 }
-
