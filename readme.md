@@ -1,64 +1,97 @@
 # WPS-Zotero Plugin
 
-A Zotero plugin for WPS Office, compatible with Windows, Linux, and macOS.
+![License](https://img.shields.io/badge/license-GPLv3-blue.svg)
+![Version](https://img.shields.io/badge/version-0.1.4-green.svg)
 
-## Features
+A powerful Zotero integration plugin for WPS Office Writer. Seamlessly cite references and generate bibliographies directly within WPS Office on Windows, Linux, and macOS. Fork From [https://github.com/Tankwyn/WPS-Zotero](https://github.com/Tankwyn/WPS-Zotero).
 
-- Insert and edit citations/bibliographies.
-- Compatible with Zotero 6 and Zotero 7.
-- Supports Microsoft Word and Google Docs citation style (mostly).
-- **Background Service**: The proxy server now runs in the background automatically, making the "one command" setup seamless.
+## 🌟 Features
 
-## Installation
+*   **Cross-Platform**: Works on Windows, Linux, and macOS.
+*   **Seamless Integration**: Adds a dedicated "Zotero" tab to the WPS Ribbon.
+*   **Smart Citation**: Insert and edit citations using Zotero's powerful search.
+*   **Live Bibliography**: Automatically generate and update bibliographies.
+*   **Style Support**: Compatible with thousands of citation styles (APA, MLA, Chicago, etc.).
+*   **Background Service**: Automatic proxy management for hassle-free connection.
+*   **Compatibility**: Supports Zotero 6, Zotero 7 and Zotero 8.
 
-### Prerequisites
+## 📋 Prerequisites
 
-- **WPS Office**: Latest version recommended for (https://www.wps.cn).
-- **Zotero**: Version 6 or newer (including Zotero 7).
-- **Python 3**: Must be installed and available in your system PATH.
+Before installing, ensure you have:
+
+1.  **WPS Office**: [Download Latest Version](https://www.wps.com/) (or https://www.wps.cn for CN version).
+2.  **Zotero**: [Download Zotero 6, 7 and 8](https://www.zotero.org/).
+3.  **Python 3.x**: Required for the communication bridge.
+    *   **Windows**: Ensure "Add Python to PATH" is checked during installation.
+    *   **Linux/macOS**: Usually pre-installed, but verify with `python3 --version`.
+
+## 🚀 Installation
 
 ### Windows
 
-1. Download the repository as a ZIP file and extract it.
-2. Double-click `windows安装与卸载.bat`.
-3. Select option `1` to install.
-4. Restart WPS Office.
+1.  **Download**: Get the latest source code (Download ZIP) and extract it.
+2.  **Run Installer**: Double-click `windows安装与卸载.bat` (Install/Uninstall script).
+3.  **Install**: Type `1` and press Enter.
+4.  **Restart**: Close and reopen WPS Office completely.
 
-The installation will automatically set up a background service so the plugin works immediately every time you open WPS.
+### Linux & macOS
 
-### Linux / macOS
-
-1. Open a terminal.
-2. Clone this repository or extract the ZIP.
-3. Run the install script:
+1.  **Terminal**: Open your terminal.
+2.  **Navigate**: Go to the downloaded/cloned directory.
+	```bash
+	git clone https://github.com/RajaSunrise/wps-zotero.git
+	
+	cd wps-zotero
+	```
+3.  **Install**:
+    ```bash
+    python3 install.py
+    ```
+4. **Proxy**:
    ```bash
-   python3 install.py
+   python3 proxy.py
    ```
-4. Restart WPS Office.
+5.  **Restart**: Restart WPS Office.
 
-## Usage
+> **Note**: The installation sets up a background service that starts automatically. You don't need to run any scripts manually after installation.
 
-After installation, you should see a "Zotero" tab in the WPS Writer ribbon.
 
-- **Add/Edit Citation**: Insert a new citation or edit an existing one.
-- **Add/Edit Bibliography**: Insert the bibliography at the cursor location.
-- **Refresh**: Update citations and bibliography.
-- **Preferences**: Change document preferences (citation style).
-- **Unlink Citations**: Remove field codes (make plain text).
+### First Run Experience
+1.  Open **Zotero** desktop application.
+2.  Open **WPS Writer**.
+3.  Click "Add/Edit Citation".
+4.  If prompted, grant permissions or allow the connection in Zotero.
 
-## Troubleshooting
+## 🔧 Troubleshooting
 
-- **No Zotero tab?**
-  - Ensure Python 3 is installed.
-  - Check if the plugin is installed in the correct directory (see `install.py` output).
-  - For macOS, ensure you have permissions to write to `~/Library/Application Support/Kingsoft/WPS/jsaddons`.
+### Common Issues
 
-- **Zotero not responding?**
-  - Make sure Zotero is running.
-  - Check if the proxy server is running (check `~/.wps-zotero-proxy.log` or `%APPDATA%\kingsoft\wps\jsaddons\wps-zotero-proxy.log`).
-  - You can try restarting the computer to ensure the background service is running.
+**1. "Zotero" tab does not appear**
+*   **Check Python**: Run `python --version` in CMD/Terminal.
+*   **Check Path**: Ensure the plugin folders were created in the WPS `jsaddons` directory.
+    *   Windows: `%APPDATA%\kingsoft\wps\jsaddons`
+    *   Linux: `~/.local/share/Kingsoft/wps/jsaddons`
+    *   macOS: `~/Library/Application Support/Kingsoft/WPS/jsaddons`
+*   **Restart**: WPS sometimes needs a full restart (check Task Manager/Activity Monitor to kill all WPS processes).
 
-## Uninstallation
+**2. Nothing happens when clicking buttons**
+*   **Is Zotero Running?**: Zotero must be open.
+*   **Check Proxy**: The Python background service might not be running.
+    *   **Windows**: Check Task Manager for a python process running `proxy.py`.
+    *   **Linux/Mac**: Run `ps aux | grep proxy.py`.
+*   **Logs**: Check the log file for errors:
+    *   Windows: `%APPDATA%\kingsoft\wps\jsaddons\wps-zotero-proxy.log`
+    *   Linux/Mac: `~/.wps-zotero-proxy.log`
 
-- **Windows**: Run `windows安装与卸载.bat` and select option `2`.
-- **Linux / macOS**: Run `python3 install.py -u`.
+**3. "Connection Error"**
+*   Disable VPNs or Proxies temporarily to test.
+*   Check if your firewall is blocking Python.
+
+## 🗑️ Uninstallation
+
+*   **Windows**: Run `windows安装与卸载.bat` and select option `2`.
+*   **Linux / macOS**: Run `python3 install.py -u`.
+
+## 📄 License
+
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE.txt](LICENSE.txt) file for details.

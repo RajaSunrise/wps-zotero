@@ -2,7 +2,6 @@
 
 import socket
 import select
-import time
 import sys
 import logging
 import os
@@ -131,9 +130,8 @@ def stop_proxy():
         s.settimeout(1.0)
         s.connect(('127.0.0.1', PROXY_PORT))
         s.send(b'POST /stopproxy HTTP/1.1\r\n\r\n')
-    except:
-        # Swallow all exceptions
-        pass
+    except Exception as e:
+        print(f"Failed to stop proxy: {e}")
     finally:
         s.close()
 
@@ -148,7 +146,7 @@ class ProxyServer:
         self.persistent = persistent
         # NOTE: Setting this on Windows will cause multiple instances listening on the same port.
         if os.name == 'posix':
-            self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1);
+            self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server.bind((host, port))
         self.server.listen()
         self.running = False
@@ -191,15 +189,15 @@ class ProxyServer:
         for s in self.input_list:
             try:
                 s.close()
-            except:
-                pass
+            except Exception as e:
+                logging.error(f"Failed to close socket: {e}")
         self.input_list.clear()
         self.channels.clear()
         self.clients.clear()
         try:
             self.server.close()
-        except:
-            pass
+        except Exception as e:
+            logging.error(f"Failed to close server: {e}")
 
     def on_accept(self):
         try:
@@ -227,8 +225,8 @@ class ProxyServer:
                 response = b'HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nZotero is not running.'
                 clientsock.send(response)
                 clientsock.close()
-            except:
-                pass
+            except Exception as e:
+                logging.error(f"Failed to send response: {e}")
 
             if clientsock in self.input_list:
                 self.input_list.remove(clientsock)
@@ -244,7 +242,8 @@ class ProxyServer:
     def on_close(self, s):
         try:
             pname = s.getpeername()
-        except:
+        except Exception as e:
+            logging.error(f"Failed to get peer name: {e}")
             pname = "unknown"
 
         if pname in self.clients:
@@ -257,8 +256,8 @@ class ProxyServer:
             out = self.channels[s]
             try:
                 out.close()
-            except:
-                pass
+            except Exception as e:
+                logging.error(f"Failed to close channel: {e}")
             if out in self.input_list:
                 self.input_list.remove(out)
             del self.channels[s]
@@ -271,8 +270,8 @@ class ProxyServer:
             self.input_list.remove(s)
         try:
             s.close()
-        except:
-            pass
+        except Exception as e:
+            logging.error(f"Failed to close socket: {e}")
         logging.info("{} has disconnected".format(pname))
 
     def on_recv(self, s, data):
@@ -284,8 +283,8 @@ class ProxyServer:
                 # Send 200 OK so the caller knows we received it, but we don't stop.
                 try:
                     s.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n')
-                except:
-                    pass
+                except Exception as e:
+                    logging.error(f"Failed to send response: {e}")
                 # We don't close socket immediately, or maybe we do?
                 # Usually HTTP is request-response.
             else:
@@ -308,7 +307,8 @@ class ProxyServer:
 
         try:
             peer_name = s.getpeername()
-        except:
+        except Exception as e:
+            logging.error(f"Failed to get peer name: {e}")
             peer_name = None
 
         if peer_name in self.clients:
@@ -326,8 +326,8 @@ class ProxyServer:
                 data = ('HTTP/1.1 200 OK\r\n' + '\r\n'.join(response_headers) + '\r\n\r\n').encode('utf8') + body_raw
                 try:
                     s.sendall(data)
-                except:
-                    pass
+                except Exception as e:
+                    logging.error(f"Failed to send preflight response: {e}")
                 logging.info('responded to a preflight request')
                 return
 
@@ -374,8 +374,8 @@ def main(argv):
     if os.path.exists(logfile) and os.path.getsize(logfile) > 100 * 1024:
         try:
             os.remove(logfile)
-        except:
-            pass
+        except Exception as e:
+            logging.error(f"Failed to remove log file: {e}")
 
     logging.basicConfig(filename=logfile,
                         filemode='a',
