@@ -314,16 +314,15 @@ class ProxyServer:
         if peer_name in self.clients:
             # Preflight responses
             logging.info('message received on client {}'.format(peer_name))
-            if data.startswith(b'OPTIONS') and get_header(headers, 'Origin') and get_header(headers, 'Access-Control-Request-Method'):
-                for k,v in PREFLIGHT_HEADERS.items():
-                    headers[k] = v
-
+            if data.startswith(b'OPTIONS') and get_header(headers, 'Origin'):
                 response_headers = []
-                for k,v in headers.items():
+                for k,v in PREFLIGHT_HEADERS.items():
                     response_headers.append(f"{k}: {v}")
+                response_headers.append('Content-Length: 0')
+                response_headers.append('Connection: close')
 
                 # Preflight response
-                data = ('HTTP/1.1 200 OK\r\n' + '\r\n'.join(response_headers) + '\r\n\r\n').encode('utf8') + body_raw
+                data = ('HTTP/1.1 204 No Content\r\n' + '\r\n'.join(response_headers) + '\r\n\r\n').encode('utf8')
                 try:
                     s.sendall(data)
                 except Exception as e:
@@ -336,6 +335,10 @@ class ProxyServer:
 
             # Force close connection so we don't have to deal with Keep-Alive
             headers['Connection'] = 'close'
+
+            # Add User-Agent to mimic a browser connector
+            if not get_header(headers, 'User-Agent'):
+                headers['User-Agent'] = 'Mozilla/5.0 (WPS-Zotero; WordProcessor)'
 
             # Reconstruct headers
             header_lines = []
