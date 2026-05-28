@@ -138,8 +138,7 @@ function zc_createClient(documentId, processor) {
         },
 
         getDocumentData: function(args) {
-            const defaultDocDataV3 = '<data data-version="3"/>';
-            // const defaultDocDataV4 = JSON.stringify("{\"dataVersion\": 4}");
+            const defaultDocDataV4 = JSON.stringify({"dataVersion": 4});
             const docId = args[0];
             assert(docId === documentId);
             let dataStr = processor.getDocData(docId);
@@ -153,10 +152,13 @@ function zc_createClient(documentId, processor) {
                 dataStr = dataStr.replaceAll('"bibliographyStyleHasBeenSet":true', '"bibliographyStyleHasBeenSet":false');
                 dataStr = dataStr.replaceAll('\\"bibliographyStyleHasBeenSet\\": true', '\\"bibliographyStyleHasBeenSet\\": false');
                 dataStr = dataStr.replaceAll('\\"bibliographyStyleHasBeenSet\\":true', '\\"bibliographyStyleHasBeenSet\\":false');
+                // Also handle cases without spaces after colon in stringified JSON
+                dataStr = dataStr.replaceAll('\"bibliographyStyleHasBeenSet\":true', '\"bibliographyStyleHasBeenSet\":false');
+                dataStr = dataStr.replaceAll('\"bibliographyStyleHasBeenSet\": true', '\"bibliographyStyleHasBeenSet\": false');
             } else {
-                // Compatible with MS word integration.
-                // default to data version 3
-                dataStr = defaultDocDataV3;
+                // Compatible with modern Zotero integration.
+                // default to data version 4 (JSON)
+                dataStr = defaultDocDataV4;
             }
 
             return respond(dataStr);

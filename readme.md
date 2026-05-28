@@ -1,7 +1,7 @@
 # WPS-Zotero Plugin
 
 ![License](https://img.shields.io/badge/license-GPLv3-blue.svg)
-![Version](https://img.shields.io/badge/version-0.1.5-green.svg)
+![Version](https://img.shields.io/badge/version-0.1.6-green.svg)
 
 A powerful Zotero integration plugin for WPS Office Writer. Seamlessly cite references and generate bibliographies directly within WPS Office on Windows, Linux, and macOS. Fork From [https://github.com/Tankwyn/WPS-Zotero](https://github.com/Tankwyn/WPS-Zotero).
 

@@ -172,6 +172,10 @@ function zc_testDocDataVer(dataStr) {
     if (dataStr) {
         try {
             let data = JSON.parse(dataStr);
+            // Handle double stringified JSON
+            if (typeof data === 'string') {
+                data = JSON.parse(data);
+            }
             version = data.dataVersion || 4;
         }
         catch {
