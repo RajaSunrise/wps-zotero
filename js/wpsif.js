@@ -170,9 +170,9 @@ function zc_indexCitationFields(doc) {
 function zc_testDocDataVer(dataStr) {
     let version = null;
     if (dataStr) {
-        version = 4
         try {
-            JSON.parse(dataStr);
+            let data = JSON.parse(dataStr);
+            version = data.dataVersion || 4;
         }
         catch {
             version = 3;
@@ -1110,9 +1110,6 @@ var zc_wps = {
         let dataStr = zc_getDocProperty(zc_getDocumentById(docId), zc_consts.prefDocDataName);
         // MS Word compatibility
         dataStr = dataStr.replaceAll('value="Field"', 'value="Http"');
-        if (zc_testDocDataVer(dataStr) === 4) {
-            dataStr = JSON.stringify(dataStr);
-        }
         return dataStr;
     },
 

@@ -98,6 +98,7 @@ function zc_createClient(documentId, processor) {
                 "supportsImportExport": true,
                 "supportsTextInsertion": true,
                 "supportsCitationMerging": true,
+                "supportsDefaultPreferences": true,
                 "processorName":"WPS Office"
             });
         },
@@ -142,13 +143,22 @@ function zc_createClient(documentId, processor) {
             const docId = args[0];
             assert(docId === documentId);
             let dataStr = processor.getDocData(docId);
-            // IMPORTANT: Change bibliographyStyleHasBeenSet to false to always get a setBibliographyStyle command.
-            dataStr = dataStr.replaceAll('bibliographyStyleHasBeenSet="1"', 'bibliographyStyleHasBeenSet="0"');
-            dataStr = dataStr.replaceAll('\\"bibliographyStyleHasBeenSet\\": true', '\\"bibliographyStyleHasBeenSet\\": false');
-            dataStr = dataStr.replaceAll('\\"bibliographyStyleHasBeenSet\\":true', '\\"bibliographyStyleHasBeenSet\\":false');
-            // Compatible with MS word integration.
-            // default to data version 3
-            dataStr = dataStr ? dataStr : defaultDocDataV3;
+
+            if (dataStr) {
+                // IMPORTANT: Change bibliographyStyleHasBeenSet to false to always get a setBibliographyStyle command.
+                // For XML data
+                dataStr = dataStr.replaceAll('bibliographyStyleHasBeenSet="1"', 'bibliographyStyleHasBeenSet="0"');
+                // For JSON data (handles both double and single stringification)
+                dataStr = dataStr.replaceAll('"bibliographyStyleHasBeenSet": true', '"bibliographyStyleHasBeenSet": false');
+                dataStr = dataStr.replaceAll('"bibliographyStyleHasBeenSet":true', '"bibliographyStyleHasBeenSet":false');
+                dataStr = dataStr.replaceAll('\\"bibliographyStyleHasBeenSet\\": true', '\\"bibliographyStyleHasBeenSet\\": false');
+                dataStr = dataStr.replaceAll('\\"bibliographyStyleHasBeenSet\\":true', '\\"bibliographyStyleHasBeenSet\\":false');
+            } else {
+                // Compatible with MS word integration.
+                // default to data version 3
+                dataStr = defaultDocDataV3;
+            }
+
             return respond(dataStr);
         },
 
