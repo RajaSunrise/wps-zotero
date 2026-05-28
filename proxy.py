@@ -340,6 +340,19 @@ class ProxyServer:
             if not get_header(headers, 'User-Agent'):
                 headers['User-Agent'] = 'Mozilla/5.0 (WPS-Zotero; WordProcessor)'
 
+            # For Zotero 7.0.5+ security mechanisms
+            # Inject headers to bypass browser request interception
+            headers['X-Zotero-Connector-API-Version'] = '3'
+            headers['Zotero-Allowed-Request'] = '1'
+
+            # Remove Origin and Sec-Fetch-* headers that trigger the security mechanisms
+            keys_to_remove = []
+            for k in headers.keys():
+                if k.lower() == 'origin' or k.lower().startswith('sec-fetch-'):
+                    keys_to_remove.append(k)
+            for k in keys_to_remove:
+                del headers[k]
+
             # Reconstruct headers
             header_lines = []
             for k,v in headers.items():
