@@ -330,35 +330,50 @@ class ProxyServer:
                 logging.info('responded to a preflight request')
                 return
 
-            # Forwarding request to Zotero
-            headers['Host'] = '127.0.0.1:{}'.format(ZOTERO_PORT)
+            # Clean the body
+            body_clean = body_raw.strip()
 
-            # Force close connection so we don't have to deal with Keep-Alive
-            headers['Connection'] = 'close'
+            # Reconstruct headers manually to avoid HTTP header validation errors in Zotero 9
+            lines = head_raw.decode('utf8', errors='ignore').split('\r\n')
+            new_lines = [lines[0]] # Request line
 
-            # Add User-Agent to mimic a browser connector
-            if not get_header(headers, 'User-Agent'):
-                headers['User-Agent'] = 'Mozilla/5.0 (WPS-Zotero; WordProcessor)'
+            for line in lines[1:]:
+                if not line.strip(): continue
+                lower_line = line.lower()
 
-            # For Zotero 7.0.5+ security mechanisms
-            # Inject headers to bypass browser request interception
-            headers['X-Zotero-Connector-API-Version'] = '3'
-            headers['Zotero-Allowed-Request'] = '1'
+                # Strip headers that we will replace or that trigger security mechanisms
+                if lower_line.startswith('host:') or \
+                   lower_line.startswith('content-length:') or \
+                   lower_line.startswith('content-type:') or \
+                   lower_line.startswith('connection:') or \
+                   lower_line.startswith('origin:') or \
+                   lower_line.startswith('sec-'):
+                    continue
+                new_lines.append(line)
 
-            # Remove Origin and Sec-Fetch-* headers that trigger the security mechanisms
-            keys_to_remove = []
-            for k in headers.keys():
-                if k.lower() == 'origin' or k.lower().startswith('sec-fetch-'):
-                    keys_to_remove.append(k)
-            for k in keys_to_remove:
-                del headers[k]
+            # Inject Anti-CSRF headers and metadata for Zotero 7.0.5+ and 9
+            new_lines.append('Host: 127.0.0.1:{}'.format(ZOTERO_PORT))
+            new_lines.append('Connection: close')
+            new_lines.append('Content-Type: application/json')
+            new_lines.append('Content-Length: {}'.format(len(body_clean)))
+            new_lines.append('Origin: chrome-extension://ekhagklcjbdpajgpjgmbionohlpdbjgc')
+            new_lines.append('Zotero-Allowed-Request: true')
+            new_lines.append('Zotero-Connector-Version: 5.0.120')
+            new_lines.append('X-Zotero-Connector-API-Version: 3')
 
-            # Reconstruct headers
-            header_lines = []
-            for k,v in headers.items():
-                header_lines.append(f"{k}: {v}")
+            # Add User-Agent to mimic a browser connector if missing
+            has_ua = False
+            for line in new_lines:
+                if line.lower().startswith('user-agent:'):
+                    has_ua = True
+                    break
+            if not has_ua:
+                new_lines.append('User-Agent: Mozilla/5.0 (WPS-Zotero; WordProcessor)')
 
-            data = (request + '\r\n' + '\r\n'.join(header_lines) + '\r\n\r\n').encode('utf8') + body_raw
+            head_text = '\r\n'.join(new_lines)
+
+            # Reconstruct data packet
+            data = head_text.encode('utf8') + b'\r\n\r\n' + body_clean
 
         else:
             logging.info('message received from zotero')
