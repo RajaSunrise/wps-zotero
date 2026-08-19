@@ -192,7 +192,8 @@ Comment=Proxy server for WPS Zotero integration
             # VBScript to run command hidden
             # CreateObject("Wscript.Shell").Run "cmd /c ...", 0, False
             cmd = f'"{python_exe}" "{proxy_script_win}" --persistent'
-            f.write(f'CreateObject("Wscript.Shell").Run "{cmd}", 0, False')
+            vbs_cmd = cmd.replace('"', '""')
+            f.write(f'CreateObject("Wscript.Shell").Run "{vbs_cmd}", 0, False\n')
 
         print(f"Created startup script: {vbs_path}")
 

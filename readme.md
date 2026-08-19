@@ -13,14 +13,14 @@ A powerful Zotero integration plugin for WPS Office Writer. Seamlessly cite refe
 *   **Live Bibliography**: Automatically generate and update bibliographies.
 *   **Style Support**: Compatible with thousands of citation styles (APA, MLA, Chicago, etc.).
 *   **Background Service**: Automatic proxy management for hassle-free connection.
-*   **Compatibility**: Supports Zotero 6, 7, 8 and 9.
+*   **Compatibility**: Supports WPS Office 12.2+ and Zotero 6, 7, 8, 9, and 10.
 
 ## 📋 Prerequisites
 
 Before installing, ensure you have:
 
-1.  **WPS Office**: [Download Latest Version](https://www.wps.com/) (or https://www.wps.cn for CN version).
-2.  **Zotero**: [Download Zotero 6, 7, 8 and 9](https://www.zotero.org/).
+1.  **WPS Office**: WPS Office 12.2+ [Download Latest Version](https://www.wps.com/) (or https://www.wps.cn for CN version).
+2.  **Zotero**: [Download Zotero 6, 7, 8, 9, and 10](https://www.zotero.org/).
 3.  **Python 3.x**: Required for the communication bridge.
     *   **Windows**: Ensure "Add Python to PATH" is checked during installation.
     *   **Linux/macOS**: Usually pre-installed, but verify with `python3 --version`.

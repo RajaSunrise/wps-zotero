@@ -351,7 +351,7 @@ class ProxyServer:
                     continue
                 new_lines.append(line)
 
-            # Inject Anti-CSRF headers and metadata for Zotero 7.0.5+ and 9
+            # Inject Anti-CSRF headers and metadata for Zotero 7.0.5+, 8, 9, and 10
             new_lines.append('Host: 127.0.0.1:{}'.format(ZOTERO_PORT))
             new_lines.append('Connection: close')
             new_lines.append('Content-Type: application/json')
